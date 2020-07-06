@@ -1,10 +1,10 @@
 <package>
   <name>flexbe_app</name>
-  <version>2.0.6</version>
+  <version>2.2.4</version>
   <description>
      flexbe_app provides a user interface (editor + runtime control) for the FlexBE behavior engine.
   </description>
-  <maintainer email="schillinger@sim.tu-darmstadt.de">Philipp Schillinger</maintainer>
+  <maintainer email="schillin@kth.se">Philipp Schillinger</maintainer>
   <license>BSD</license>
 
   <url>http://ros.org/wiki/flexbe_app</url>
@@ -12,8 +12,23 @@
 
   <buildtool_depend>catkin</buildtool_depend>
 
+  <build_depend>curl</build_depend>
+  <build_depend>rostest</build_depend>
+
+  <run_depend>libnss3-dev</run_depend>
+
   <run_depend>rospy</run_depend>
   <run_depend>genpy</run_depend>
   <run_depend>actionlib</run_depend>
+  <run_depend>rospack</run_depend>
+
+  <run_depend>flexbe_onboard</run_depend>
+  <run_depend>flexbe_mirror</run_depend>
+  <run_depend>flexbe_widget</run_depend>
+
+  <run_depend>std_msgs</run_depend>
+  <run_depend>flexbe_msgs</run_depend>
+
+  <test_depend>rosunit</test_depend>
 
 </package>

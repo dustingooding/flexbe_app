@@ -41,7 +41,11 @@ RC.PubSub = new (function() {
 	}
 	var outcome_request_callback = function(msg) {
 		var target_state = Behavior.getStatemachine().getStateByPath(msg.target);
-		UI.RuntimeControl.displayOutcomeRequest(target_state.getOutcomes()[msg.outcome], target_state);
+		if (msg.outcome == 255) {
+			UI.RuntimeControl.displayOutcomeRequest('', undefined);  // clear previous request
+		} else {
+			UI.RuntimeControl.displayOutcomeRequest(target_state.getOutcomes()[msg.outcome], target_state);
+		}
 	}
 
 	var behavior_feedback_callback = function (msg){
@@ -234,7 +238,7 @@ RC.PubSub = new (function() {
 	}
 
 	var synthesis_action_feedback_callback = function(feedback, root, feedback_cb) {
-		console.log('Synthesis status: ' + feedback.status + ' (' (feedback.progress * 100) + '%)');
+		console.log('Synthesis status: ' + feedback.status + ' (' + (feedback.progress * 100) + '%)');
 
 		if(feedback_cb != undefined) feedback_cb(feedback);
 	}
@@ -447,13 +451,20 @@ RC.PubSub = new (function() {
 			RC.Controller.signalStarted();
 			RC.Sync.register("BehaviorStart", 60);
 
+			var behavior_structure = undefined;
+			try {
+				behavior_structure = Behavior.createStructureInfo();
+			} catch (error) {
+				T.logError("Failed to construct behavior structure, execution might fail: " + error);	
+			}
+
 			// request start
 			behavior_start_publisher.publish({
 				behavior_name: Behavior.getBehaviorName(),
 				autonomy_level: autonomy,
 				arg_keys: param_keys,
 				arg_values: param_vals,
-				structure: Behavior.createStructureInfo()
+				structure: behavior_structure
 			});
 			RC.Sync.setProgress("BehaviorStart", 0.2, false);
 		});

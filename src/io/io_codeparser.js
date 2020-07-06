@@ -25,8 +25,8 @@ IO.CodeParser = new (function() {
 		// [1] - content of the block
 	var doc_block_pattern = /'''\n\r?([^']*)\n\r?\s*'''/i;
 		// Finds all import lines
-		// [1] - from ..., [3] - import ... (comma separated list)
-	var import_line_pattern = /^\s*from ((\w|\.)+) import (.+)\s*$/igm;
+		// [1] - from ..., [3] - import ... (comma separated list), [4] - optional import alias
+	var import_line_pattern = /^\s*from ((\w|\.)+) import (\w+)(?: as (\w+))?\s*$/igm;
 		// [1] - date of behavior creation
 	var behavior_date_pattern = /Created on\s*(.+)/i;
 		// [1] - author of the behavior
@@ -86,8 +86,10 @@ IO.CodeParser = new (function() {
 	var string_quotes_pattern = /^["'](.*)["']/;
 		// [1] - name of the state class
 	var state_class_pattern = /^\s*(\w+)\(/;
-		// [1] - name of the behavior class , [2] - (optional) list of default keys
-	var state_behavior_pattern = /^\s*self\.use_behavior\((\w+)(?:, ?['"](?:[^'"]*)['"])?(?:, ?default_keys ?= ?\[([^\]]*)\])?\)/;
+		// [1] - name of the behavior class , [2+2*i,3+2*i] - (optional) list of default keys or parameters
+		// if [2] is "default_keys", [3] is a list of default keys
+		// if [2] or [4] is "parameters", [3] or [5] is a dict of behavior parameters
+	var state_behavior_pattern = /^\s*self\.use_behavior\((\w+)(?:, ?['"](?:[^'"]*)['"])?(?:,\s*(default_keys) ?= ?\[([^\]]*)\])?(?:,\s*(parameters) ?= ?\{([^\}]*)\})?\)/;
 		// [1] - kind of data (transitions/autonomy/remapping), [2] - comma separated list of values including surrounding braces
 	var state_interface_pattern = /(transitions|autonomy|remapping)\s*=\s*(\{[^}]*\})/;
 
@@ -180,6 +182,13 @@ IO.CodeParser = new (function() {
 
 	var parseTopSection = function(code) {
 		// parse documentation
+		var state_type_imports = {};
+		code.replace(import_line_pattern, function(l, import_path, _, import_class, import_alias) {
+			if (import_path == "flexbe_core") return l;
+			var import_package = import_path.split(".")[0];
+			state_type_imports[import_alias || import_class] = import_package;
+		});
+
 		var comment_result = code.match(doc_block_pattern);
 		var behavior_date = "";
 		var behavior_author = "";
@@ -201,6 +210,7 @@ IO.CodeParser = new (function() {
 		return {
 			behavior_date: behavior_date,
 			behavior_author: behavior_author,
+			state_type_imports: state_type_imports,
 			additional_imports: additional_imports
 		}
 	}
@@ -453,11 +463,14 @@ IO.CodeParser = new (function() {
 	var parseStateParams = function(params) {
 		// get name
 		var state_name = helper_removeQuotes(params[0]);
-
-		// get state class and params
 		var state_class = "";
 		var state_type = "state";
 		var parameter_values = [];
+		var transitions = [];
+		var autonomy = [];
+		var remapping = [];
+
+		// get state class and params
 		var class_result = params[1].match(state_class_pattern);
 		if (class_result != null) {
 			state_class = class_result[1];
@@ -479,10 +492,23 @@ IO.CodeParser = new (function() {
 			if (behavior_use_result != null) {
 				state_class = behavior_use_result[1];
 				state_type = "behavior";
-				if (behavior_use_result[2] != undefined) {
-					parameter_values = behavior_use_result[2].replace(/["'\s]/g, '').split(',');
-				} else {
-					parameter_values = [];
+				if (behavior_use_result.length > 2 && behavior_use_result[2] == 'default_keys') {
+					behavior_use_result[3].replace(/["'\s]/g, '').split(',').forEach(key => {
+						remapping.push({
+							key: key,
+							value: undefined
+						});
+					});
+				}
+				if (behavior_use_result.length > 2 && behavior_use_result[2] == 'parameters'
+					|| behavior_use_result.length > 4 && behavior_use_result[4] == 'parameters') {
+					var dict_def = (behavior_use_result.length > 4)? behavior_use_result[5] : behavior_use_result[3];
+					var dict_split = helper_splitOnTopCommas('{'+dict_def+'}');
+					dict_split.forEach(element => {
+						var keyvalue = helper_splitKeyValue(element, ':');
+						keyvalue.key = helper_removeQuotes(keyvalue.key);
+						parameter_values.push(keyvalue);
+					});
 				}
 			} else {
 				state_class = params[1];
@@ -492,9 +518,6 @@ IO.CodeParser = new (function() {
 		}
 
 		// get further parameters
-		var transitions = [];
-		var autonomy = [];
-		var remapping = [];
 		for(var i=2; i<params.length; i++) {
 			var param_result = params[i].match(state_interface_pattern);
 			if (param_result == null) {
@@ -536,6 +559,11 @@ IO.CodeParser = new (function() {
 				var remapping_list = helper_splitOnTopCommas(param_result[2]);
 				for (var j=0; j<remapping_list.length; j++) {
 					var remapping_kv = helper_splitKeyValue(remapping_list[j].trim(), ":");
+					var default_input = remapping.findElement(element => {
+						return element.key == helper_removeQuotes(remapping_kv.key);
+					})
+					if (default_input != undefined)
+						continue;
 					if (remapping_kv != undefined) {
 						remapping.push({
 							key: helper_removeQuotes(remapping_kv.key),
@@ -588,11 +616,11 @@ IO.CodeParser = new (function() {
 		// split into relevant methods
 		var code_init_split = code_class_split[3].split(init_def_pattern);
 		if (code_init_split.length == 1) throw "behavior constructor definition could not be found";
-		var code_init = code_init_split[1].split(/\tdef/)[0];
+		var code_init = code_init_split[1].split(/\sdef\s/)[0];
 
 		var code_create_split = code_class_split[3].split(create_def_pattern);
 		if (code_create_split.length == 1) throw "behavior state machine creation section could not be found";
-		var code_create = code_create_split[1].split(/\tdef/)[0];
+		var code_create = code_create_split[1].split(/\sdef\s/)[0];
 
 		// parse init section
 		var init_result = parseInitSection(code_init);
@@ -626,6 +654,7 @@ IO.CodeParser = new (function() {
 			author: 				top_result.behavior_author,
 			creation_date: 			top_result.behavior_date,
 			behavior_comments: 		init_result.comments,
+			state_types:			top_result.state_type_imports,
 
 			manual_code: 			{
 									manual_import: 	manual_import,
@@ -664,7 +693,7 @@ IO.CodeParser = new (function() {
 
 		var code_create_split = code_class_split[3].split(create_def_pattern);
 		if (code_create_split.length == 1) throw "behavior state machine creation section could not be found";
-		var code_create = code_create_split[1].split(/\tdef/)[0];
+		var code_create = code_create_split[1].split(/\sdef\s/)[0];
 
 		// parse create section
 		var create_result = parseCreateSection(code_create, true);

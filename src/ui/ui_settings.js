@@ -2,10 +2,13 @@ UI.Settings = new (function() {
 	var that = this;
 
 	var App = require('nw.gui').App;
+	var path = require('path');
 
 	var ros_pkg_cache;
 	var state_pkg_cache;
 	var behavior_pkg_cache;
+	var pkg_cache_enabled;
+	var state_parser;
 
 	var runtime_timeout;
 	var stop_behaviors;
@@ -16,6 +19,7 @@ UI.Settings = new (function() {
 
 	var default_package;
 	var code_indentation;
+	var explicit_states;
 	var editor_command;
 
 	var transition_mode;
@@ -30,9 +34,11 @@ UI.Settings = new (function() {
 
 	var storeSettings = function() {
 		chrome.storage.local.set({
-			'ros_pkg_cache': [],
-			'state_pkg_cache': [],
-			'behavior_pkg_cache': [],
+			'ros_pkg_cache': ros_pkg_cache,
+			'state_pkg_cache': state_pkg_cache,
+			'behavior_pkg_cache': behavior_pkg_cache,
+			'pkg_cache_enabled': pkg_cache_enabled,
+			'state_parser': state_parser,
 			'runtime_timeout': runtime_timeout,
 			'stop_behaviors': stop_behaviors,
 			'collapse_info': collapse_info,
@@ -41,6 +47,7 @@ UI.Settings = new (function() {
 			'collapse_hint': collapse_hint,
 			'default_package': default_package,
 			'code_indentation': code_indentation,
+			'explicit_states': explicit_states,
 			'editor_command': editor_command,
 			'transition_mode': transition_mode,
 			'gridsize': gridsize,
@@ -60,6 +67,8 @@ UI.Settings = new (function() {
 			'ros_pkg_cache': [],
 			'state_pkg_cache': [],
 			'behavior_pkg_cache': [],
+			'pkg_cache_enabled': true,
+			'state_parser': 'regex',
 			'runtime_timeout': 10,
 			'stop_behaviors': false,
 			'collapse_info': true,
@@ -68,6 +77,7 @@ UI.Settings = new (function() {
 			'collapse_hint': false,
 			'default_package': 'flexbe_behaviors',
 			'code_indentation': 0,
+			'explicit_states': false,
 			'editor_command': 'gedit --new-window $FILE +$LINE',
 			'transition_mode': 1,
 			'gridsize': 50,
@@ -81,6 +91,10 @@ UI.Settings = new (function() {
 			ros_pkg_cache = items.ros_pkg_cache;
 			state_pkg_cache = items.state_pkg_cache;
 			behavior_pkg_cache = items.behavior_pkg_cache;
+			pkg_cache_enabled = items.pkg_cache_enabled;
+			document.getElementById("cb_pkg_cache_enabled").checked = items.pkg_cache_enabled;
+			state_parser = items.state_parser;
+			document.getElementById("select_state_parser").value = items.state_parser;
 
 			runtime_timeout = items.runtime_timeout;
 			document.getElementById("input_runtime_timeout").value = items.runtime_timeout;
@@ -99,6 +113,8 @@ UI.Settings = new (function() {
 			that.createBehaviorPackageSelect(document.getElementById("select_default_package"));
 			code_indentation = items.code_indentation;
 			document.getElementById("select_code_indentation").selectedIndex = items.code_indentation;
+			explicit_states = items.explicit_states;
+			document.getElementById("cb_explicit_states").checked = items.explicit_states;
 			editor_command = items.editor_command;
 			document.getElementById("input_editor_command").value = items.editor_command;
 
@@ -121,37 +137,64 @@ UI.Settings = new (function() {
 			document.getElementById("input_synthesis_system").value = items.synthesis_system;
 			updateSynthesisInterface();
 
-			IO.PackageParser.discover(ros_pkg_cache, (new_packages, added_states, added_behaviors) => {
-				ros_pkg_cache = ros_pkg_cache.concat(new_packages);
-				state_pkg_cache = state_pkg_cache.concat(added_states);
-				behavior_pkg_cache = behavior_pkg_cache.concat(added_behaviors);
-				storeSettings(); // to update cache
-				updateWorkspaceDisplay();
-
-				that.createBehaviorPackageSelect(document.getElementById("select_default_package"));
-				that.createBehaviorPackageSelect(document.getElementById("select_behavior_package"));
-				Behavior.setBehaviorPackage(document.getElementById('select_behavior_package').value);
-
-				// async
-				that.updateStatelib();
-				that.updateBehaviorlib();
-			});
+			if (pkg_cache_enabled) {
+				// always remove state and behavior packages from cache to force parsing them again
+				ros_pkg_cache = ros_pkg_cache.filter(pkg => (
+					!state_pkg_cache.findElement(state_pkg => state_pkg.name == pkg.name) &&
+					!behavior_pkg_cache.findElement(behavior_pkg => behavior_pkg.name == pkg.name)
+				));
+			} else {
+				ros_pkg_cache = [];
+			}
+			IO.PackageParser.discover(ros_pkg_cache, that.packageDiscoverCallback);
 
 			that.setRosProperties('');
 		});
 	}
 
+	this.packageDiscoverCallback = function(updated_cache, discovered_state_pkgs, discovered_behavior_pkgs) {
+		ros_pkg_cache = pkg_cache_enabled? updated_cache : [];
+		state_pkg_cache = discovered_state_pkgs;
+		behavior_pkg_cache = discovered_behavior_pkgs;
+		storeSettings(); // to update cache
+		updateWorkspaceDisplay();
+
+		that.createBehaviorPackageSelect(document.getElementById("select_default_package"));
+		that.createBehaviorPackageSelect(document.getElementById("select_behavior_package"));
+		Behavior.setBehaviorPackage(document.getElementById('select_behavior_package').value);
+
+		// async
+		that.updateStatelib();
+		that.updateBehaviorlib();
+	}
+
 	this.updateStatelib = function() {
 		WS.Statelib.resetLib();
 		state_pkg_cache.forEach(state_pkg => {
-			IO.PackageParser.parseStateFolder(state_pkg['path'], state_pkg['path'], false);
+			state_pkg['display'].setAttribute('style', 'background-color: white;');
+			IO.PackageParser.parseStates(state_pkg, (progress) => {
+				state_pkg['display'].setAttribute('style', 'background-image: linear-gradient(to right, #9d5, #9d5 ' + (progress * 100) + '%, white ' + (progress * 100) + '%, white);');
+				if (UI.Panels.isActivePanel(UI.Panels.ADD_STATE_PANEL)) {
+					UI.Panels.AddState.show();
+				}
+			}, () => {
+				state_pkg['display'].setAttribute('style', '');
+			});
 		});
 	}
 
 	this.updateBehaviorlib = function() {
 		WS.Behaviorlib.resetLib();
 		behavior_pkg_cache.forEach(behavior_pkg => {
-			IO.PackageParser.parseBehaviorFolder(behavior_pkg['path'], behavior_pkg['name']);
+			behavior_pkg['display'].setAttribute('style', 'background-color: white;');
+			IO.PackageParser.parseBehaviors(behavior_pkg, (progress) => {
+				behavior_pkg['display'].setAttribute('style', 'background-image: linear-gradient(to right, #9d5, #9d5 ' + (progress * 100) + '%, white ' + (progress * 100) + '%, white);');
+				if (UI.Panels.isActivePanel(UI.Panels.SELECT_BEHAVIOR_PANEL)) {
+					UI.Panels.SelectBehavior.show();
+				}
+			}, () => {
+				behavior_pkg['display'].setAttribute('style', '');
+			});
 		});
 	}
 
@@ -208,7 +251,9 @@ UI.Settings = new (function() {
 			var pkg_select = document.createElement("select");
 			pkg_select.setAttribute("style", "width:100%; margin: 5px 0;");
 			var pkg_select_update_title = function() {
-				pkg_select.setAttribute("title", pkg_select.options[pkg_select.selectedIndex].getAttribute("title"));
+				if (pkg_select.options.length > 0) {
+					pkg_select.setAttribute("title", pkg_select.options[pkg_select.selectedIndex].getAttribute("title"));
+				}
 			};
 			pkg_select.addEventListener('change', pkg_select_update_title);
 			var packages = ros_pkg_cache.filter((pkg) => { return !pkg['path'].startsWith("/opt/ros"); });
@@ -286,6 +331,7 @@ UI.Settings = new (function() {
 			entry.setAttribute("class", "tag");
 			entry.setAttribute("title", pkg['path']);
 			entry.innerText = pkg['name'];
+			pkg['display'] = entry;
 			return entry;
 		}
 		var behavior_el = document.getElementById("workspace_behavior_packages");
@@ -300,60 +346,48 @@ UI.Settings = new (function() {
 			var entry = createEntry(state_pkg);
 			state_el.appendChild(entry);
 		});
+		document.getElementById("num_pkg_cache").innerText = ros_pkg_cache.length;
 	}
 
 	this.importConfiguration = function() {
-		chrome.fileSystem.chooseEntry({
-			type: 'openFile',
-			accepts: [{
-				description: 'Configuration (.json)',
-				extensions: ['json']
-			}]
-		}, function(entry) {
-			if (chrome.runtime.lastError) {
-				return;
-			}
-			UI.Panels.setActivePanel(UI.Panels.NO_PANEL);
-			entry.file(function(file) {
-				var reader = new FileReader();
-				reader.onload = function(event) {
-					var config = JSON.parse(event.target.result);
+		var dialog = document.getElementById("file_dialog_import");
+		dialog.addEventListener("change", function(evt) {
+			if (this.value == '') return;
+			try {
+				IO.Filesystem.readFile(this.value, function(content) {
+					if (content == undefined) return;  // error reported by readFile
+					var config = JSON.parse(content);
 					chrome.storage.local.set(config, function() {
 						that.restoreSettings();
 					});
-				};
-				reader.readAsText(file);
-			});
-		});
+				});
+			} catch (err) {
+				T.logError('Failed to import configuration: ' + err);
+			}
+			this.value = '';  // reset in case the same file should be selected again
+		}, false);
+		dialog.click();
 	}
 
 	this.exportConfiguration = function() {
-		chrome.fileSystem.chooseEntry({
-			type: 'saveFile',
-			suggestedName: 'flexbe_config.json',
-			accepts: [{
-				description: 'Configuration (.json)',
-				extensions: ['json']
-			}]
-		}, function(entry) {
-			if (chrome.runtime.lastError) {
-				return;
+		var dialog = document.getElementById("file_dialog_export");
+		dialog.addEventListener("change", function(evt) {
+			if (this.value == '') return;
+			try {
+				var folder_path = path.dirname(this.value);
+				var file_name = path.basename(this.value);
+				chrome.storage.local.get(null, function(config) {
+					config.ros_pkg_cache = [];
+					config.state_pkg_cache = [];
+					config.behavior_pkg_cache = [];
+					IO.Filesystem.createFile(folder_path, file_name, JSON.stringify(config));
+				});
+			} catch (err) {
+				T.logError('Failed to export configuration: ' + err);
 			}
-			chrome.storage.local.get(null, function(config) {
-				var truncated = false;
-				var content = JSON.stringify(config);
-				entry.createWriter(function(writer) {
-					writer.onerror = function(error) { T.logError("Error when exporting configuration: " + error); };
-					writer.onwriteend = function() { 
-						if (!truncated) {
-							truncated = true;
-							this.truncate(this.position);
-						}
-					};
-					writer.write(new Blob([content], {type: 'text/plain'}));
-				}, function(e) { T.logError("Error when exporting configuration: " + error); });
-			});
-		});
+			this.value = '';  // reset in case the same file should be selected again
+		}, false);
+		dialog.click();
 	}
 
 
@@ -421,6 +455,11 @@ UI.Settings = new (function() {
 		storeSettings();
 	}
 
+	this.explicitStatesClicked = function(evt) {
+		explicit_states = evt.target.checked;
+		storeSettings();
+	}
+
 	this.editorCommandChanged = function() {
 		var el = document.getElementById('input_editor_command');
 		editor_command = el.value;
@@ -434,6 +473,10 @@ UI.Settings = new (function() {
 	this.getCodeIndentation = function() {
 		var chars = ['\t', '  ', '    ', '        '];
 		return chars[code_indentation];
+	}
+
+	this.isExplicitStates = function() {
+		return explicit_states;
 	}
 
 	this.getEditorCommand = function(file_path, line_number) {
@@ -529,12 +572,26 @@ UI.Settings = new (function() {
 	// Workspace
 	//===========
 
+	this.stateParserChanged = function() {
+		var el = document.getElementById('select_state_parser');
+		state_parser = el.value;
+		storeSettings();
+	}
+
+	this.pkgCacheEnabledClicked = function(evt) {
+		pkg_cache_enabled = evt.target.checked;
+		storeSettings();
+	}
+
 	this.forceDiscoverClicked = function() {
 		ros_pkg_cache = [];
 		state_pkg_cache = [];
 		behavior_pkg_cache = [];
-		storeSettings();
+		IO.PackageParser.discover(ros_pkg_cache, that.packageDiscoverCallback);
+	}
 
+	this.getStateParser = function() {
+		return state_parser;
 	}
 
 

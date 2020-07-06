@@ -118,6 +118,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     document.getElementById('select_default_package').addEventListener('change', UI.Settings.defaultPackageChanged);
     document.getElementById('select_code_indentation').addEventListener('change', UI.Settings.codeIndentationChanged);
+    document.getElementById('cb_explicit_states').addEventListener('change', UI.Settings.explicitStatesClicked);
     document.getElementById('input_editor_command').addEventListener('change', UI.Settings.editorCommandChanged);
 
     document.getElementById('select_transition_mode').addEventListener('change', UI.Settings.transitionEndpointsChanged);
@@ -126,6 +127,10 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('input_commands_key').addEventListener('change', UI.Settings.commandsKeyChanged);
 
     document.getElementById('button_ros_connect').addEventListener('click', UI.Settings.rosConnectClicked);
+
+    document.getElementById('select_state_parser').addEventListener('change', UI.Settings.stateParserChanged);
+    document.getElementById('cb_pkg_cache_enabled').addEventListener('change', UI.Settings.pkgCacheEnabledClicked);
+    document.getElementById('button_force_discover').addEventListener('click', UI.Settings.forceDiscoverClicked);
 
     document.getElementById('cb_synthesis_enabled').addEventListener('change', UI.Settings.synthesisEnabledClicked);
     document.getElementById('input_synthesis_topic').addEventListener('change', UI.Settings.synthesisTopicChanged);
@@ -172,6 +177,8 @@ document.addEventListener('DOMContentLoaded', function() {
     process.on('exit', (code) => {
         RC.PubSub.shutdown();
         ROS.shutdown();
+        IO.PackageParser.stopWatching();
+		IO.StateParser.close();
     });
 
     nw.App.on('open', () => {
@@ -203,6 +210,10 @@ document.addEventListener('DOMContentLoaded', function() {
             allow_close = confirm(txt);
         }
         if (allow_close) {
+            RC.PubSub.shutdown();
+            ROS.shutdown();
+            IO.PackageParser.stopWatching();
+            IO.StateParser.close();
             this.close(true);
         }
     });

@@ -11,8 +11,12 @@ UI.Panels.StateProperties = new (function() {
 		document.getElementById(id).style.background = "";
 	}
 
-	var addHoverDocumentation = function(el, type, name, state_class) {
-		var def = WS.Statelib.getFromLib(state_class);
+	var addHoverDocumentation = function(el, type, name, state_class, behavior_name) {
+		if (state_class) {
+			var def = WS.Statelib.getFromLib(state_class);
+		} else if (behavior_name) {
+			var def = WS.Behaviorlib.getByName(behavior_name);
+		}
 		var doc = undefined;
 		switch (type) {
 			case "param": doc = def.getParamDesc().findElement(function(el) { return el.name == name; }); break;
@@ -41,8 +45,8 @@ UI.Panels.StateProperties = new (function() {
 		});
 	}
 
-	var addAutocomplete = function(el, state_class, mode, state) {
-		var additional_keywords = [];
+	var addAutocomplete = function(el, state_class, mode, state, additional_keywords) {
+		var additional_keywords = additional_keywords || [];
 		if (state_class != undefined) {
 			var class_vars = WS.Statelib.getFromLib(state_class).getClassVariables();
 			for (var i = 0; i < class_vars.length; i++) {
@@ -109,7 +113,7 @@ UI.Panels.StateProperties = new (function() {
 		document.getElementById("input_prop_state_name").value = state.getStateName();
 		document.getElementById("label_prop_state_class").innerText = state.getStateClass();
 		document.getElementById("label_prop_state_package").innerText = state.getStatePackage();
-		document.getElementById("label_prop_state_desc").innerText = WS.Statelib.getFromLib(state.getStateClass()).getStateDesc();
+		document.getElementById("label_prop_state_desc").innerText = WS.Statelib.getFromLib(state.getStateType()).getStateDesc();
 
 		var highlight_apply_button = function() {
 			if (apply_pulse != undefined) return;
@@ -154,9 +158,9 @@ UI.Panels.StateProperties = new (function() {
 				tr.appendChild(td_input);
 				document.getElementById("panel_prop_parameters_content").appendChild(tr);
 
-				addHoverDocumentation(tr, "param", params[i], state.getStateClass());
+				addHoverDocumentation(tr, "param", params[i], state.getStateType());
 
-				addAutocomplete(input_field, state.getStateClass());
+				addAutocomplete(input_field, state.getStateType());
 
 				input_field.addEventListener('blur', function() {
 					this.style.backgroundColor = Checking.isValidExpressionSyntax(this.value, false)? "initial" : "#fca";
@@ -185,7 +189,7 @@ UI.Panels.StateProperties = new (function() {
 					+"<option value='-1' " + ((autonomy_list_complete[i] == -1)? "selected='selected'" : "") + " style='color: gray; font-style: italic;'>Inherit</option>"
 					+"</select></td>";
 				document.getElementById("panel_prop_autonomy_content").appendChild(tr);
-				addHoverDocumentation(tr, "outcome", outcome_list_complete[i], state.getStateClass());
+				addHoverDocumentation(tr, "outcome", outcome_list_complete[i], state.getStateType());
 			}
 		} else {
 			document.getElementById("panel_prop_autonomy").style.display = "none";
@@ -214,9 +218,9 @@ UI.Panels.StateProperties = new (function() {
 				tr.appendChild(td_input);
 				document.getElementById("panel_prop_input_keys_content").appendChild(tr);
 
-				addHoverDocumentation(tr, "input", input_keys[i], state.getStateClass());
+				addHoverDocumentation(tr, "input", input_keys[i], state.getStateType());
 
-				addAutocomplete(input_field, state.getStateClass(), "input", state);
+				addAutocomplete(input_field, state.getStateType(), "input", state);
 			}
 		} else {
 			document.getElementById("panel_prop_input_keys").style.display = "none";
@@ -246,9 +250,9 @@ UI.Panels.StateProperties = new (function() {
 				tr.appendChild(td_input);
 				document.getElementById("panel_prop_output_keys_content").appendChild(tr);
 
-				addHoverDocumentation(tr, "output", output_keys[i], state.getStateClass());
+				addHoverDocumentation(tr, "output", output_keys[i], state.getStateType());
 
-				addAutocomplete(input_field, state.getStateClass(), "output", state);
+				addAutocomplete(input_field, state.getStateType(), "output", state);
 			}
 		} else {
 			document.getElementById("panel_prop_output_keys").style.display = "none";
@@ -295,13 +299,33 @@ UI.Panels.StateProperties = new (function() {
 			remove_button.addEventListener("click", function() {
 				if (RC.Controller.isReadonly()
 					|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+					|| Behavior.isReadonly()
 					|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
 					|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
 					) return;
-				state.removeOutcome(this.getAttribute("outcome"));
+				var removed_outcome = this.getAttribute("outcome");
+				state.removeOutcome(removed_outcome);
 				var row = this.parentNode;
 				row.parentNode.removeChild(row);
 				UI.Statemachine.refreshView();
+				var container_path = current_prop_state.getStatePath();
+				ActivityTracer.addActivity(ActivityTracer.ACT_STATE_CHANGE,
+					"Removed outcome from container " + current_prop_state.getStateName(),
+					function() { // undo
+						var container = Behavior.getStatemachine().getStateByPath(container_path);
+						container.addOutcome(removed_outcome);
+						UI.Statemachine.refreshView();
+						if (container == current_prop_state)
+							displayPropertiesForStatemachine(current_prop_state);
+					},
+					function() { // redo
+						var container = Behavior.getStatemachine().getStateByPath(container_path);
+						container.removeOutcome(removed_outcome);
+						UI.Statemachine.refreshView();
+						if (container == current_prop_state)
+							displayPropertiesForStatemachine(current_prop_state);
+					}
+				);
 			});
 
 			var row = document.createElement("tr");
@@ -328,12 +352,36 @@ UI.Panels.StateProperties = new (function() {
 			input_field.addEventListener("blur", function() {
 				if (RC.Controller.isReadonly()
 					|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+					|| Behavior.isReadonly()
 					|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
 					|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
 					) return;
-				var idx = state.getInputKeys().indexOf(this.getAttribute("input_key"));
-				state.getInputMapping()[idx] = this.value;
+				var input_key = this.getAttribute("input_key");
+				var idx = state.getInputKeys().indexOf(input_key);
+				var old_mapping_value = state.getInputMapping()[idx];
+				var new_mapping_value = this.value
+				state.getInputMapping()[idx] = new_mapping_value;
 				if (UI.Statemachine.isDataflow()) UI.Statemachine.refreshView();
+				var container_path = current_prop_state.getStatePath();
+				ActivityTracer.addActivity(ActivityTracer.ACT_STATE_CHANGE,
+					"Changed input mapping of container " + current_prop_state.getStateName(),
+					function() { // undo
+						var container = Behavior.getStatemachine().getStateByPath(container_path);
+						var idx = state.getInputKeys().indexOf(input_key);
+						container.getInputMapping()[idx] = old_mapping_value;
+						UI.Statemachine.refreshView();
+						if (container == current_prop_state)
+							displayPropertiesForStatemachine(current_prop_state);
+					},
+					function() { // redo
+						var container = Behavior.getStatemachine().getStateByPath(container_path);
+						var idx = state.getInputKeys().indexOf(input_key);
+						container.getInputMapping()[idx] = old_mapping_value;
+						UI.Statemachine.refreshView();
+						if (container == current_prop_state)
+							displayPropertiesForStatemachine(current_prop_state);
+					}
+				);
 			});
 			var input_field_td = document.createElement("td");
 			input_field_td.appendChild(input_field);
@@ -348,15 +396,38 @@ UI.Panels.StateProperties = new (function() {
 			remove_button.addEventListener("click", function() {
 				if (RC.Controller.isReadonly()
 					|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+					|| Behavior.isReadonly()
 					|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
 					|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
 					) return;
 				var idx = state.getInputKeys().indexOf(this.getAttribute("input_key"));
-				state.getInputKeys().remove(this.getAttribute("input_key"));
-				state.getInputMapping().remove(state.getInputMapping()[idx]);
+				var old_input_key = this.getAttribute("input_key");
+				var old_input_mapping = state.getInputMapping()[idx];
+				state.getInputKeys().remove(old_input_key);
+				state.getInputMapping().remove(old_input_mapping);
 				var row = this.parentNode;
 				row.parentNode.removeChild(row);
 				if (UI.Statemachine.isDataflow()) UI.Statemachine.refreshView();
+				var container_path = current_prop_state.getStatePath();
+				ActivityTracer.addActivity(ActivityTracer.ACT_STATE_CHANGE,
+					"Removed input key of container " + current_prop_state.getStateName(),
+					function() { // undo
+						var container = Behavior.getStatemachine().getStateByPath(container_path);
+						container.getInputKeys().push(old_input_key);
+						container.getInputMapping().push(old_input_mapping);
+						UI.Statemachine.refreshView();
+						if (container == current_prop_state)
+							displayPropertiesForStatemachine(current_prop_state);
+					},
+					function() { // redo
+						var container = Behavior.getStatemachine().getStateByPath(container_path);
+						container.getInputKeys().remove(old_input_key);
+						container.getInputMapping().remove(old_input_mapping);
+						UI.Statemachine.refreshView();
+						if (container == current_prop_state)
+							displayPropertiesForStatemachine(current_prop_state);
+					}
+				);
 			});
 
 			var row = document.createElement("tr");
@@ -383,12 +454,36 @@ UI.Panels.StateProperties = new (function() {
 			input_field.addEventListener("blur", function() {
 				if (RC.Controller.isReadonly()
 					|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+					|| Behavior.isReadonly()
 					|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
 					|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
 					) return;
-				var idx = state.getOutputKeys().indexOf(this.getAttribute("output_key"));
-				state.getOutputMapping()[idx] = this.value;
+				var output_key = this.getAttribute("output_key");
+				var idx = state.getOutputKeys().indexOf(output_key);
+				var old_mapping_value = state.getOutputMapping()[idx];
+				var new_mapping_value = this.value
+				state.getOutputMapping()[idx] = new_mapping_value;
 				if (UI.Statemachine.isDataflow()) UI.Statemachine.refreshView();
+				var container_path = current_prop_state.getStatePath();
+				ActivityTracer.addActivity(ActivityTracer.ACT_STATE_CHANGE,
+					"Changed output mapping of container " + current_prop_state.getStateName(),
+					function() { // undo
+						var container = Behavior.getStatemachine().getStateByPath(container_path);
+						var idx = state.getOutputKeys().indexOf(output_key);
+						container.getOutputMapping()[idx] = old_mapping_value;
+						UI.Statemachine.refreshView();
+						if (container == current_prop_state)
+							displayPropertiesForStatemachine(current_prop_state);
+					},
+					function() { // redo
+						var container = Behavior.getStatemachine().getStateByPath(container_path);
+						var idx = state.getOutputKeys().indexOf(output_key);
+						container.getOutputMapping()[idx] = old_mapping_value;
+						UI.Statemachine.refreshView();
+						if (container == current_prop_state)
+							displayPropertiesForStatemachine(current_prop_state);
+					}
+				);
 			});
 			var input_field_td = document.createElement("td");
 			input_field_td.appendChild(input_field);
@@ -403,15 +498,38 @@ UI.Panels.StateProperties = new (function() {
 			remove_button.addEventListener("click", function() {
 				if (RC.Controller.isReadonly()
 					|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+					|| Behavior.isReadonly()
 					|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
 					|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
 					) return;
 				var idx = state.getOutputKeys().indexOf(this.getAttribute("output_key"));
-				state.getOutputKeys().remove(this.getAttribute("output_key"));
-				state.getOutputMapping().remove(state.getOutputMapping()[idx]);
+				var old_output_key = this.getAttribute("output_key");
+				var old_output_mapping = state.getOutputMapping()[idx];
+				state.getOutputKeys().remove(old_output_key);
+				state.getOutputMapping().remove(old_output_mapping);
 				var row = this.parentNode;
 				row.parentNode.removeChild(row);
 				if (UI.Statemachine.isDataflow()) UI.Statemachine.refreshView();
+				var container_path = current_prop_state.getStatePath();
+				ActivityTracer.addActivity(ActivityTracer.ACT_STATE_CHANGE,
+					"Removed output key of container " + current_prop_state.getStateName(),
+					function() { // undo
+						var container = Behavior.getStatemachine().getStateByPath(container_path);
+						container.getOutputKeys().push(old_output_key);
+						container.getOutputMapping().push(old_output_mapping);
+						UI.Statemachine.refreshView();
+						if (container == current_prop_state)
+							displayPropertiesForStatemachine(current_prop_state);
+					},
+					function() { // redo
+						var container = Behavior.getStatemachine().getStateByPath(container_path);
+						container.getOutputKeys().remove(old_output_key);
+						container.getOutputMapping().remove(old_output_mapping);
+						UI.Statemachine.refreshView();
+						if (container == current_prop_state)
+							displayPropertiesForStatemachine(current_prop_state);
+					}
+				);
 			});
 
 			var row = document.createElement("tr");
@@ -423,6 +541,11 @@ UI.Panels.StateProperties = new (function() {
 	}
 
 	var displayPropertiesForBehavior = function(state) {
+		var tt = document.getElementById("properties_tooltip");
+		if (tt != undefined) {
+			tt.parentNode.removeChild(tt);
+		}
+
 		document.getElementById("panel_properties_state").style.display = "none";
 		document.getElementById("panel_properties_behavior").style.display = "block";
 		document.getElementById("panel_properties_statemachine").style.display = "none";
@@ -431,6 +554,145 @@ UI.Panels.StateProperties = new (function() {
 		document.getElementById("label_prop_be_class").innerText = state.getBehaviorName();
 		document.getElementById("label_prop_be_package").innerText = state.getStatePackage();
 		document.getElementById("label_prop_be_desc").innerText = WS.Behaviorlib.getByName(state.getBehaviorName()).getBehaviorDesc();
+
+		// Parameters
+		//-----------
+		params = state.getParameters();
+		values = state.getParameterValues();
+		if (params.length > 0) {
+			document.getElementById("panel_prop_be_parameters").style.display = "block";
+			document.getElementById("panel_prop_be_parameters_content").innerHTML = "";
+			for (var i=0; i<params.length; ++i) {
+				var param_def = state.getParameterDefinition(params[i]);
+				var default_value = param_def.default;
+				default_value = (param_def.type == "text" || param_def.type == "enum")? '"' + default_value + '"' : default_value;
+				var label = document.createElement("td");
+				label.innerHTML = params[i] + ": ";
+
+				var input_field = document.createElement("input");
+				input_field.setAttribute("class", "inline_text_edit");
+				input_field.setAttribute("type", "text");
+				input_field.setAttribute("value", values[i] || default_value);
+				input_field.setAttribute("default_value", default_value);
+				input_field.setAttribute("param_key", params[i]);
+				if (values[i] == undefined) {
+					input_field.setAttribute("style", "text-decoration: line-through; color: rgba(0,0,0,.4);");
+					input_field.setAttribute("disabled", "disabled");
+					input_field.setAttribute("title", "Default: " + default_value);
+					input_field.setAttribute("class", "inline_text_edit_readonly");
+					label.setAttribute("style", "color: gray");
+				}
+				input_field.addEventListener("blur", function() {
+					if (RC.Controller.isReadonly()
+						|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+						|| Behavior.isReadonly()
+						|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
+						|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
+						) {
+							this.value = !this.value;
+							return;
+						}
+					var param_key = this.getAttribute("param_key");
+					var param_value = this.value;
+					var idx = state.getParameters().indexOf(param_key);
+					var old_value = state.getParameterValues()[idx];
+					state.getParameterValues()[idx] = param_value;
+					var behavior_path = current_prop_state.getStatePath();
+					ActivityTracer.addActivity(ActivityTracer.ACT_STATE_CHANGE,
+						"Changed parameter value of behavior " + current_prop_state.getStateName(),
+						function() { // undo
+							var behavior_state = Behavior.getStatemachine().getStateByPath(behavior_path);
+							var idx = behavior_state.getParameters().indexOf(param_key);
+							behavior_state.getParameterValues()[idx] = old_value;
+							if (behavior_state == current_prop_state)
+								displayPropertiesForBehavior(current_prop_state);
+						},
+						function() { // redo
+							var behavior_state = Behavior.getStatemachine().getStateByPath(behavior_path);
+							var idx = behavior_state.getParameters().indexOf(param_key);
+							behavior_state.getParameterValues()[idx] = param_value;
+							if (behavior_state == current_prop_state)
+								displayPropertiesForBehavior(current_prop_state);
+						}
+					);
+				});
+				var input_field_td = document.createElement("td");
+				input_field_td.appendChild(input_field);
+				var additional_keywords = undefined;
+				if (param_def.type == "enum") {
+					additional_keywords = [];
+					param_def.additional.forEach(opt => {
+						additional_keywords.push({text: opt, hint: "enum", fill: '"' + opt + '"'});
+					});
+				}
+				addAutocomplete(input_field, undefined, undefined, undefined, additional_keywords);
+
+				var default_button = document.createElement("input");
+				default_button.setAttribute("type", "checkbox");
+				default_button.setAttribute("param_key", params[i]);
+				if (values[i] == undefined) {
+					default_button.setAttribute("checked", "checked");
+				}
+				default_button.addEventListener("change", function() {
+					if (RC.Controller.isReadonly()
+						|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+						|| Behavior.isReadonly()
+						|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
+						|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
+						) return;
+					var input_field = this.parentNode.parentNode.childNodes[1].firstChild;
+					var param_key = this.getAttribute("param_key");
+					var param_value = input_field.value;
+					var behavior_path = current_prop_state.getStatePath();
+					var make_default = function() {
+						var behavior_state = Behavior.getStatemachine().getStateByPath(behavior_path);
+						var idx = behavior_state.getParameters().indexOf(param_key);
+						behavior_state.getParameterValues()[idx] = undefined;
+						if (behavior_state == current_prop_state)
+							displayPropertiesForBehavior(current_prop_state);
+					}
+					var remove_default = function() {
+						var behavior_state = Behavior.getStatemachine().getStateByPath(behavior_path);
+						var idx = behavior_state.getParameters().indexOf(param_key);
+						behavior_state.getParameterValues()[idx] = param_value;
+						if (behavior_state == current_prop_state)
+							displayPropertiesForBehavior(current_prop_state);
+					}
+					if(this.checked) {
+						make_default();
+						ActivityTracer.addActivity(ActivityTracer.ACT_STATE_CHANGE,
+							"Use default value for parameter " + param_key + " of behavior " + current_prop_state.getStateName(),
+							remove_default,
+							make_default
+						);
+					} else {
+						remove_default();
+						ActivityTracer.addActivity(ActivityTracer.ACT_STATE_CHANGE,
+							"Set custom value for parameter " + param_key + " of behavior " + current_prop_state.getStateName(),
+							make_default,
+							remove_default
+						);
+					}
+					UI.RuntimeControl.resetParameterTableClicked();
+				});
+				var default_button_txt = document.createElement("label");
+				default_button_txt.innerText = "default";
+				var default_button_td = document.createElement("td");
+				default_button_td.setAttribute("title", "Use the default value as defined by the behavior.");
+				default_button_td.appendChild(default_button);
+				default_button_td.appendChild(default_button_txt);
+
+				var row = document.createElement("tr");
+				row.appendChild(label);
+				row.appendChild(input_field_td);
+				row.appendChild(default_button_td);
+				document.getElementById("panel_prop_be_parameters_content").appendChild(row);
+
+				addHoverDocumentation(row, "param", params[i], undefined, state.getBehaviorName());
+			}
+		} else {
+			document.getElementById("panel_prop_be_parameters").style.display = "none";
+		}
 
 		// Outcomes
 		//----------
@@ -463,22 +725,46 @@ UI.Panels.StateProperties = new (function() {
 				var input_field = document.createElement("input");
 				input_field.setAttribute("class", "inline_text_edit");
 				input_field.setAttribute("type", "text");
-				input_field.setAttribute("value", input_mapping[i]);
+				input_field.setAttribute("value", input_mapping[i] || input_keys[i]);
 				input_field.setAttribute("input_key", input_keys[i]);
-				if (state.getDefaultKeys().contains(input_keys[i])) {
+				if (input_mapping[i] == undefined) {
 					input_field.setAttribute("style", "text-decoration: line-through; color: rgba(0,0,0,.4);");
 					input_field.setAttribute("disabled", "disabled");
-					input_field.setAttribute("title", "Value: " + state.getDefaultValue(input_keys[i]));
+					input_field.setAttribute("title", "Value: " + state.getDefaultUserdataValue(input_keys[i]));
+					input_field.setAttribute("class", "inline_text_edit_readonly");
+					label.setAttribute("style", "color: gray");
 				}
 				input_field.addEventListener("blur", function() {
 					if (RC.Controller.isReadonly()
 						|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+						|| Behavior.isReadonly()
 						|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
 						|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
 						) return;
-					var idx = state.getInputKeys().indexOf(this.getAttribute("input_key"));
-					state.getInputMapping()[idx] = this.value;
+					var input_key = this.getAttribute("input_key");
+					var input_value = this.value;
+					var idx = state.getInputKeys().indexOf(input_key);
+					var old_input_value = state.getInputMapping()[idx];
+					state.getInputMapping()[idx] = input_value;
 					if (UI.Statemachine.isDataflow()) UI.Statemachine.refreshView();
+					var behavior_path = current_prop_state.getStatePath();
+					ActivityTracer.addActivity(ActivityTracer.ACT_STATE_CHANGE,
+						"Changed input mapping of behavior " + current_prop_state.getStateName(),
+						function() { // undo
+							var behavior_state = Behavior.getStatemachine().getStateByPath(behavior_path);
+							var idx = behavior_state.getInputKeys().indexOf(input_key);
+							behavior_state.getInputMapping()[idx] = old_input_value;
+							if (behavior_state == current_prop_state)
+								displayPropertiesForBehavior(current_prop_state);
+						},
+						function() { // redo
+							var behavior_state = Behavior.getStatemachine().getStateByPath(behavior_path);
+							var idx = behavior_state.getInputKeys().indexOf(input_key);
+							behavior_state.getInputMapping()[idx] = input_value;
+							if (behavior_state == current_prop_state)
+								displayPropertiesForBehavior(current_prop_state);
+						}
+					);
 				});
 				var input_field_td = document.createElement("td");
 				input_field_td.appendChild(input_field);
@@ -487,26 +773,50 @@ UI.Panels.StateProperties = new (function() {
 				var default_button = document.createElement("input");
 				default_button.setAttribute("type", "checkbox");
 				default_button.setAttribute("input_key", input_keys[i]);
-				if (state.getDefaultKeys().contains(input_keys[i])) {
+				if (input_mapping[i] == undefined) {
 					default_button.setAttribute("checked", "checked");
 				}
 				default_button.addEventListener("change", function() {
 					if (RC.Controller.isReadonly()
 						|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+						|| Behavior.isReadonly()
 						|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
 						|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
 						) return;
 					var input_field = this.parentNode.parentNode.childNodes[1].firstChild;
+					var input_key = this.getAttribute("input_key");
+					var input_value = input_field.value;
+					var behavior_path = current_prop_state.getStatePath();
+					var make_default = function() {
+						var behavior_state = Behavior.getStatemachine().getStateByPath(behavior_path);
+						var idx = behavior_state.getInputKeys().indexOf(input_key);
+						behavior_state.getInputMapping()[idx] = undefined;
+						if (behavior_state == current_prop_state)
+							displayPropertiesForBehavior(current_prop_state);
+						if (UI.Statemachine.isDataflow()) UI.Statemachine.refreshView();
+					}
+					var remove_default = function() {
+						var behavior_state = Behavior.getStatemachine().getStateByPath(behavior_path);
+						var idx = behavior_state.getInputKeys().indexOf(input_key);
+						behavior_state.getInputMapping()[idx] = input_value;
+						if (behavior_state == current_prop_state)
+							displayPropertiesForBehavior(current_prop_state);
+						if (UI.Statemachine.isDataflow()) UI.Statemachine.refreshView();
+					}
 					if(this.checked) {
-						input_field.setAttribute("style", "text-decoration: line-through; color: rgba(0,0,0,.4);");
-						input_field.setAttribute("disabled", "disabled");
-						state.addDefaultKey(this.getAttribute("input_key"));
-						input_field.setAttribute("title", "Value: " + state.getDefaultValue(this.getAttribute("input_key")));
+						make_default();
+						ActivityTracer.addActivity(ActivityTracer.ACT_STATE_CHANGE,
+							"Use default value for input key " + input_key + " of behavior " + current_prop_state.getStateName(),
+							remove_default,
+							make_default
+						);
 					} else {
-						input_field.removeAttribute("style");
-						input_field.removeAttribute("disabled");
-						input_field.removeAttribute("title");
-						state.removeDefaultKey(this.getAttribute("input_key"));
+						remove_default();
+						ActivityTracer.addActivity(ActivityTracer.ACT_STATE_CHANGE,
+							"Set custom value for input key " + input_key + " of behavior " + current_prop_state.getStateName(),
+							make_default,
+							remove_default
+						);
 					}
 					if (UI.Statemachine.isDataflow()) UI.Statemachine.refreshView();
 				});
@@ -546,12 +856,34 @@ UI.Panels.StateProperties = new (function() {
 				input_field.addEventListener("blur", function() {
 					if (RC.Controller.isReadonly()
 						|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+						|| Behavior.isReadonly()
 						|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
 						|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
 						) return;
-					var idx = state.getOutputKeys().indexOf(this.getAttribute("output_key"));
-					state.getOutputMapping()[idx] = this.value;
+					var output_key = this.getAttribute("output_key");
+					var output_value = this.value;
+					var idx = state.getOutputKeys().indexOf(output_key);
+					var old_output_value = state.getOutputMapping()[idx];
+					state.getOutputMapping()[idx] = output_value;
 					if (UI.Statemachine.isDataflow()) UI.Statemachine.refreshView();
+					var behavior_path = current_prop_state.getStatePath();
+					ActivityTracer.addActivity(ActivityTracer.ACT_STATE_CHANGE,
+						"Changed output mapping of behavior " + current_prop_state.getStateName(),
+						function() { // undo
+							var behavior_state = Behavior.getStatemachine().getStateByPath(behavior_path);
+							var idx = behavior_state.getOutputKeys().indexOf(output_key);
+							behavior_state.getOutputMapping()[idx] = old_output_value;
+							if (behavior_state == current_prop_state)
+								displayPropertiesForBehavior(current_prop_state);
+						},
+						function() { // redo
+							var behavior_state = Behavior.getStatemachine().getStateByPath(behavior_path);
+							var idx = behavior_state.getOutputKeys().indexOf(output_key);
+							behavior_state.getOutputMapping()[idx] = output_value;
+							if (behavior_state == current_prop_state)
+								displayPropertiesForBehavior(current_prop_state);
+						}
+					);
 				});
 				var input_field_td = document.createElement("td");
 				input_field_td.appendChild(input_field);
@@ -596,6 +928,7 @@ UI.Panels.StateProperties = new (function() {
 	this.deleteStateClicked = function() {
 		if (RC.Controller.isReadonly()
 			|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+			|| Behavior.isReadonly()
 			|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
 			|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
 			) {
@@ -663,8 +996,8 @@ UI.Panels.StateProperties = new (function() {
 	}
 
 	this.openState = function() {
-		var state_class = current_prop_state.getStateClass();
-		var state_definition = WS.Statelib.getFromLib(state_class);
+		var state_type = current_prop_state.getStateType();
+		var state_definition = WS.Statelib.getFromLib(state_type);
 		try {
 			var file_path = state_definition.getFilePath();
 			var command = UI.Settings.getEditorCommand(file_path).split(' ');
@@ -692,6 +1025,7 @@ UI.Panels.StateProperties = new (function() {
 	this.applyPropertiesClicked = function() {
 		if (RC.Controller.isReadonly() 
 			|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+			|| Behavior.isReadonly()
 			|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
 			|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
 			) {
@@ -836,6 +1170,7 @@ UI.Panels.StateProperties = new (function() {
 
 		if (!RC.Controller.isReadonly()
 			&& !UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+			&& !Behavior.isReadonly()
 			&& (!RC.Controller.isLocked() || !RC.Controller.isStateLocked(current_prop_state.getStatePath()))
 			&& !RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
 			) {
@@ -875,6 +1210,7 @@ UI.Panels.StateProperties = new (function() {
 		if (document.getElementById("input_prop_outcome_add").value == "") return;
 		if (RC.Controller.isReadonly()
 			|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+			|| Behavior.isReadonly()
 			|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
 			|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
 			) return;
@@ -910,6 +1246,7 @@ UI.Panels.StateProperties = new (function() {
 		if (document.getElementById("input_prop_input_key_add").value == "") return;
 		if (RC.Controller.isReadonly()
 			|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+			|| Behavior.isReadonly()
 			|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
 			|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
 			) return;
@@ -952,6 +1289,7 @@ UI.Panels.StateProperties = new (function() {
 		if (document.getElementById("input_prop_output_key_add").value == "") return;
 		if (RC.Controller.isReadonly()
 			|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+			|| Behavior.isReadonly()
 			|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
 			|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
 			) return;
@@ -993,6 +1331,7 @@ UI.Panels.StateProperties = new (function() {
 	this.containerTypeChanged = function(evt) {
 		if(RC.Controller.isReadonly()
 			|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+			|| Behavior.isReadonly()
 			|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
 			|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
 			) return;
@@ -1094,6 +1433,7 @@ UI.Panels.StateProperties = new (function() {
 	this.synthesizeClicked = function() {
 		if(RC.Controller.isReadonly()
 			|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+			|| Behavior.isReadonly()
 			|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
 			|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
 			) return;

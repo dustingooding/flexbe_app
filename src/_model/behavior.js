@@ -31,6 +31,8 @@ Behavior = new (function() {
 	var file_name = undefined;
 	var manifest_path = undefined;
 
+	var readonly = false;
+
 
 	this.getBehaviorName = function() {
 		return behavior_name;
@@ -274,6 +276,14 @@ Behavior = new (function() {
 		root_sm = _root_sm;
 	}
 
+	this.setReadonly = function(_readonly) {
+		readonly = _readonly;
+	}
+
+	this.isReadonly = function() {
+		return readonly;
+	}
+
 	this.resetBehavior = function() {
 		behavior_name = "";
 		behavior_package = "";
@@ -299,6 +309,7 @@ Behavior = new (function() {
 		comment_notes = [];
 
 		root_sm = new Statemachine("", new WS.StateMachineDefinition([], [], []));
+		readonly = false;
 	}
 
 	this.setFiles = function(_file_name, _manifest_path) {
@@ -330,6 +341,7 @@ Behavior = new (function() {
 		var result = [];
 
 		createStateStructure(root_sm, result);
+
 		return result;
 	}
 
@@ -338,31 +350,35 @@ Behavior = new (function() {
 		result.path = s.getStatePath();
 		result.outcomes = s.getOutcomes();
 		result.transitions = [];
-		if (s.getContainer() != undefined) {
-			result.autonomy = s.getAutonomy();
-			var transitions = s.getContainer().getTransitions();
-			for (var i=0; i<result.outcomes.length; i++) {
-				var transition = transitions.findElement(function(element) {
-					return element.getFrom().getStateName() == s.getStateName() && element.getOutcome() == result.outcomes[i];
-				});
-				var target_name = transition.getTo().getStateName();
-				if (s.getContainer().isConcurrent() && transition.getTo().getStateClass() == ':CONDITION') {
-					target_name = target_name.split('#')[0];
+		try {
+			if (s.getContainer() != undefined) {
+				result.autonomy = s.getAutonomy();
+				var transitions = s.getContainer().getTransitions();
+				for (var i=0; i<result.outcomes.length; i++) {
+					var transition = transitions.findElement(function(element) {
+						return element.getFrom().getStateName() == s.getStateName() && element.getOutcome() == result.outcomes[i];
+					});
+					var target_name = transition.getTo().getStateName();
+					if (s.getContainer().isConcurrent() && transition.getTo().getStateClass() == ':CONDITION') {
+						target_name = target_name.split('#')[0];
+					}
+					result.transitions.push(target_name);
 				}
-				result.transitions.push(target_name);
 			}
-		}
-		result.children = [];
-		if (s instanceof BehaviorState) {
-			s = s.getBehaviorStatemachine();
-		}
-		if (s instanceof Statemachine) {
-			var children = s.getStates();
-			for (var c=0; c<children.length; c++) {
-				var child = children[c];
-				result.children.push(children[c].getStateName());
-				createStateStructure(children[c], info);
+			result.children = [];
+			if (s instanceof BehaviorState) {
+				s = s.getBehaviorStatemachine();
 			}
+			if (s instanceof Statemachine) {
+				var children = s.getStates();
+				for (var c=0; c<children.length; c++) {
+					var child = children[c];
+					result.children.push(children[c].getStateName());
+					createStateStructure(children[c], info);
+				}
+			}
+		} catch (error) {
+			throw {path: error.path || result.path, error: error.error || error};
 		}
 		info.push(result);
 	}

@@ -200,16 +200,28 @@ UI.RuntimeControl = new (function() {
 			return;
 		}
 
-		var state_class = state.getStateClass();
+		var state_type = state.getStateType();
 		var doc = "";
 
 		if (state instanceof Statemachine) {
-			doc += "<b>Statemachine</b><br />";
+			doc += "<b>Container</b><br /><br />";
+			if (state.isConcurrent()) {
+				doc += "Execution type: Concurrency<br />";
+				doc += "<i>Parallel execution of all elements.</i><br />";
+			} else if (state.isPriority()) {
+				doc += "Execution type: Priority<br />";
+				doc += "<i>Execution supersedes all other containers.</i><br />";
+			} else {
+				doc += "Execution type: Statemachine<br />";
+				doc += "<i>Sequential execution based on outcomes.</i><br />";
+			}
+			doc += "<br />Double-click the displayed container symbol to look inside."
 		} else if (state instanceof BehaviorState) {
-			doc += "<b>Behavior</b><br />";
-		} else if (WS.Statelib.getFromLib(state_class) != undefined) {
-			doc += "<b>" + state_class + "</b><br />";
-			doc += WS.Statelib.getFromLib(state_class).getStateDesc() + "<br />";
+			doc += "<b>" + state.getBehaviorName() + "</b> (Behavior)<br />";
+			doc += WS.Behaviorlib.getByName(state.getBehaviorName()).getBehaviorDesc() + "<br />";
+		} else if (WS.Statelib.getFromLib(state_type) != undefined) {
+			doc += "<b>" + state_type + "</b><br />";
+			doc += WS.Statelib.getFromLib(state_type).getStateDesc() + "<br />";
 			var pkeys = state.getParameters();
 			var pvals = state.getParameterValues();
 			if (pkeys.length > 0) {
@@ -224,6 +236,11 @@ UI.RuntimeControl = new (function() {
 					doc += " (" + resolved + ")</div>";
 				}
 			}
+			doc += "<br /><br />";
+			doc += "<b>Outcomes:</b><br />";
+			WS.Statelib.getFromLib(state_type).getOutcomeDesc().forEach(outcome => {
+				doc += "<div><b>" + outcome.name + "</b>: " + outcome.desc + "</div>";
+			});
 		}
 
 		document.getElementById("runtime_documentation_text").innerHTML = doc;
@@ -249,7 +266,9 @@ UI.RuntimeControl = new (function() {
 		for (var i = 0; i < embedded_behaviors.length; i++) {
 			if (embedded_behaviors[i] == undefined) continue;
 			var b = embedded_behaviors[i];
-			var ps = b.getBehaviorManifest().params.clone();
+			var ps = b.getBehaviorManifest().params.filter(p => {
+				return b.getParameterValues()[b.getParameters().indexOf(p.name)] == undefined;
+			});
 			params = params.concat(ps.filter(function(el) {
 				return params.findElement(function(p) {
 					return p.name == el.name;
@@ -420,6 +439,7 @@ UI.RuntimeControl = new (function() {
 		document.getElementById("runtime_waiting_display").style.display = "none";
 		document.getElementById("runtime_offline_display").style.display = "none";
 		document.getElementById("runtime_no_behavior_display").style.display = "none";
+		ActivityTracer.setUpdateCallback();
 		setDocumentation(undefined);
 		if (R != undefined) {
 			R.remove();
@@ -501,7 +521,7 @@ UI.RuntimeControl = new (function() {
 			});
 			var selection_box = document.getElementById("selection_rc_autonomy");
 			var autonomy_value = parseInt(selection_box.options[selection_box.selectedIndex].value);
-			RC.PubSub.sendBehaviorStart(param_keys, param_vals, autonomy_value); 
+			RC.PubSub.sendBehaviorStart(param_keys, param_vals, autonomy_value);
 		});
 	}
 
@@ -710,6 +730,21 @@ UI.RuntimeControl = new (function() {
 	this.displayNoBehavior = function() {
 		hideDisplays();
 		document.getElementById("runtime_no_behavior_display").style.display = "inline";
+		var updateHistoryDisplay = function() {
+			var historyHTML = "";
+			var currentIdx = ActivityTracer.getCurrentIndex();
+			ActivityTracer.getActivityList().forEach((activity, idx) => {
+				if (activity == undefined) return;
+				var fontStyle = "";
+				if (idx > currentIdx) {
+					fontStyle = ' style="text-decoration: line-through;"';
+				}
+				historyHTML += "<li" + fontStyle + ">" + activity.description + "</li>";
+			});
+			document.getElementById("rc_save_history").innerHTML = "<ul>" + historyHTML + "</ul>";
+		};
+		updateHistoryDisplay();
+		ActivityTracer.setUpdateCallback(updateHistoryDisplay);
 	}
 
 	this.displayOutcomeRequest = function(outcome, target) {
@@ -720,6 +755,11 @@ UI.RuntimeControl = new (function() {
 			outcome_request.target = target.getStatePath();
 			if (R != undefined) {
 				drawStatusLabel("Onboard requested outcome: " + target.getStateName() + " > " + outcome);
+				updateDrawing();
+			}
+		} else {
+			if (R != undefined) {
+				drawStatusLabel("");
 				updateDrawing();
 			}
 		}
@@ -851,6 +891,8 @@ UI.RuntimeControl = new (function() {
 		if (!RC.Controller.isLocked()) {
 			that.displayLockBehavior();
 		}
+
+		outcome_request.target = undefined;
 		
 		if (status_label != undefined) {
 			status_label.remove();

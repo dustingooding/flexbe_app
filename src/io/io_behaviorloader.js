@@ -4,17 +4,27 @@ IO.BehaviorLoader = new (function() {
 	var path = require('path');
 
 
-	var parseCode = function(file_content, manifest_data) {
+	var parseCode = function(file_content, manifest_data, callback) {
+		callback = callback || console.error;
 		var parsingResult;
 		try {
 			parsingResult = IO.CodeParser.parseCode(file_content);
 			T.logInfo("Code parsing completed.");
 		} catch (err) {
-			T.logError("Code parsing failed: " + err);
+			var error_string = "Code parsing failed: " + err;
+			T.logError(error_string);
+			callback(error_string);
 			return;
 		}
-		applyParsingResult(parsingResult, manifest_data);
-		T.logInfo("Behavior " + parsingResult.behavior_name + " loaded.");
+		try {
+			applyParsingResult(parsingResult, manifest_data);
+			T.logInfo("Behavior " + parsingResult.behavior_name + " loaded.");
+		} catch (err) {
+			var error_string = "Code parsing failed: " + err;
+			T.logError(error_string);
+			callback(error_string);
+			return;
+		}
 
 		var error_string = Checking.checkBehavior();
 		if (error_string != undefined) {
@@ -22,6 +32,7 @@ IO.BehaviorLoader = new (function() {
 			T.logError(error_string);
 			RC.Controller.signalChanged();
 		}
+		callback(error_string);
 	}
 
 	var applyParsingResult = function(result, manifest) {
@@ -32,8 +43,17 @@ IO.BehaviorLoader = new (function() {
 		Behavior.setStatemachine(sm);
 		UI.Statemachine.resetStatemachine();
 		T.logInfo("Behavior state machine built.");
-		
+
 		ActivityTracer.resetActivities();
+
+		ROS.getPackagePath(manifest.rosnode_name, (package_path) => {
+			ROS.getPackagePythonPath(manifest.rosnode_name, (python_path) => {
+				if (!python_path.startsWith(package_path)) {
+					Behavior.setReadonly(true);
+				}
+				UI.Statemachine.refreshView();
+			});
+		});
 	}
 
 	var resetEditor = function() {
@@ -46,54 +66,39 @@ IO.BehaviorLoader = new (function() {
 		UI.Panels.setActivePanel(UI.Panels.NO_PANEL);
 	}
 
-	this.loadBehavior = function(manifest) {
+	this.loadBehavior = function(manifest, callback) {
 		T.clearLog();
 		UI.Panels.Terminal.show();
 
 		resetEditor();
 
-		var package_name = manifest.rosnode_name;
-		ROS.getPackagePath(package_name, (package_path) => {
-			if (package_path == undefined) {
-				T.logError("Failed to load behavior: ROS package "+package_name+" not found, please check behavior manifest.");
-				return;
-			}
-			var file_path = path.join(package_path, 'src', package_name, manifest.codefile_name);
-			IO.Filesystem.readFile(file_path, (content) => {
-				T.logInfo("Parsing sourcecode...");
-				parseCode(content, manifest);
-			});
+		var file_path = path.join(manifest.codefile_path, manifest.codefile_name);
+		IO.Filesystem.readFile(file_path, (content) => {
+			T.logInfo("Parsing sourcecode...");
+			parseCode(content, manifest, callback);
 		});
 	}
 
 	this.loadBehaviorInterface = function(manifest, callback) {
-		var package_name = manifest.rosnode_name;
-		ROS.getPackagePath(package_name, (package_path) => {
-			if (package_path == undefined) {
-				T.logError("Failed to load behavior: ROS package "+package_name+" not found, please check behavior manifest.");
+		var file_path = path.join(manifest.codefile_path, manifest.codefile_name);
+		IO.Filesystem.readFile(file_path, (content) => {
+			try {
+				var parsingResult = IO.CodeParser.parseSMInterface(content);
+				callback(parsingResult);
+			} catch (err) {
+				T.logError("Failed to parse behavior interface of " + manifest.name + ": " + err);
 				return;
 			}
-			var file_path = path.join(package_path, 'src', package_name, manifest.codefile_name);
-			IO.Filesystem.readFile(file_path, (content) => {
-				try {
-					var parsingResult = IO.CodeParser.parseSMInterface(content);
-					callback(parsingResult);
-				} catch (err) {
-					T.logError("Failed to parse behavior interface of " + manifest.name + ": " + err);
-					return;
-				}
-			});
 		});
 	}
 
 	this.updateManualSections = function(callback) {
 		var names = Behavior.createNames();
 		var package_name = names.rosnode_name;
-		ROS.getPackagePath(package_name, (package_path) => {
-			if (package_path == undefined) {
+		ROS.getPackagePythonPath(package_name, (folder_path) => {
+			if (folder_path == undefined) {
 				return;
 			}
-			var folder_path = path.join(package_path, 'src', package_name);
 			var file_path = path.join(folder_path, names.file_name);
 			IO.Filesystem.checkFileExists(folder_path, names.file_name, (exists) => {
 				if (exists) {
@@ -115,28 +120,21 @@ IO.BehaviorLoader = new (function() {
 	}
 
 	this.parseBehaviorSM = function(manifest, callback) {
-		var package_name = manifest.rosnode_name;
-		ROS.getPackagePath(package_name, (package_path) => {
-			if (package_path == undefined) {
-				T.logError("Failed to load behavior: ROS package "+package_name+" not found, please check behavior manifest.");
+		var file_path = path.join(manifest.codefile_path, manifest.codefile_name);
+		IO.Filesystem.readFile(file_path, (content) => {
+			console.log("Preparing sourcecode of behavior " + manifest.name + "...");
+			try {
+				parsingResult = IO.CodeParser.parseCode(content);
+			} catch (err) {
+				console.log("Code parsing failed: " + err);
 				return;
 			}
-			var file_path = path.join(package_path, 'src', package_name, manifest.codefile_name);
-			IO.Filesystem.readFile(file_path, (content) => {
-				console.log("Preparing sourcecode of behavior " + manifest.name + "...");
-				try {
-					parsingResult = IO.CodeParser.parseCode(content);
-				} catch (err) {
-					console.log("Code parsing failed: " + err);
-					return;
-				}
-				callback({
-					container_name: "",
-					container_sm_var_name: parsingResult.root_sm_name,
-					sm_defs: parsingResult.sm_defs,
-					sm_states: parsingResult.sm_states,
-					default_userdata: parsingResult.default_userdata
-				});
+			callback({
+				container_name: "",
+				container_sm_var_name: parsingResult.root_sm_name,
+				sm_defs: parsingResult.sm_defs,
+				sm_states: parsingResult.sm_states,
+				default_userdata: parsingResult.default_userdata
 			});
 		});
 	}

@@ -86,11 +86,35 @@ IO.ModelGenerator = new (function() {
 					T.logInfo("Please check your workspace settings.");
 					continue;
 				}
-				s = new BehaviorState(s_def.state_name, state_def, s_def.parameter_values);
+				s = new BehaviorState(s_def.state_name, state_def);
+				s.setParameterValues(helper_getSortedValueList(s.getParameters(), s.getParameterValues(), s_def.parameter_values));
 			} else {
-				var state_def = WS.Statelib.getFromLib(s_def.state_class);
+				var state_def = undefined;
+				if (s_def.state_class.includes("__")) {
+					var type_split = s_def.state_class.split("__");
+					var state_key = type_split[0] + "." + type_split[1];
+					var state_def = WS.Statelib.getFromLib(state_key);
+					if (state_def == undefined) {
+						s_def.state_class = type_split[1];
+					}
+				} 
 				if (state_def == undefined) {
-					T.logError("Unable to find state definition for: " + s_def.state_class);
+					var state_key = s_def.state_class;
+					var state_def = WS.Statelib.getClassFromLib(state_key, WS.Statelib.isClassUnique(state_key)? undefined : lib_def => {
+						for (var j=0; j<s_def.transitions_from.length; j++) {
+							if (!lib_def.getOutcomes().contains(s_def.transitions_from[j].outcome)) {
+								return false;
+							}
+						}
+						return true;
+					});
+					if (state_def != undefined && !WS.Statelib.isClassUnique(state_key)) {
+						T.logWarn("State class name " + state_key + " is not unique, but was able to re-construct.");
+						T.logWarn("Please save behavior again to fix this for the future.");
+					}
+				}
+				if (state_def == undefined) {
+					T.logError("Unable to find state definition for: " + state_key);
 					T.logInfo("Please check your workspace settings.");
 					continue;
 				}

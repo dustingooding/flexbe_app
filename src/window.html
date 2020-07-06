@@ -6,7 +6,7 @@
 	<script src="ext/d3.min.js"></script>
 	<script src="ext/json_parse_raw.js"></script>
 	<script src="ext/yaml.min.js"></script>
-	
+
 	<script src="window.js"></script>
 
 	<script src="events.js"></script>
@@ -75,8 +75,10 @@
 	<script src="ws/ws_statemachinedefinition.js"></script>
 	<script src="ws/ws_statelib.js"></script>
 
-	<script src="_testing/scripts.js"></script>
-	<script src="_testing/test.js"></script>
+	<script src="_test/scripts.js"></script>
+	<script src="_test/testreport.js"></script>
+	<script src="_test/statelib.test.js"></script>
+	<script src="_test/checkbehaviorsreport.js"></script>
 
 	<link rel="stylesheet" href="style/main.css" type="text/css" />
 	<link rel="stylesheet" href="style/dashboard.css" type="text/css" />
@@ -112,7 +114,7 @@
 			<div class="category_button" id="button_to_se"><img src="img/se.png" width="32" height="32" /> Configuration</div>
 		</td><td id="title_button_panel">
 
-		</td></tr></table>	
+		</td></tr></table>
 	</div>
 
 	<div id="flexbe_about" title="About FlexBE">
@@ -165,7 +167,7 @@
 
 	<div id="properties_autocomplete" class="sidepanel_autocomplete" style="display: none;" idx="0"></div>
 
-	<div id="dashboard"> 
+	<div id="dashboard">
 
 		<div class="box">
 			<h1>Overview</h1>
@@ -204,13 +206,13 @@
 			<table class="box_table"><tr><td>
 				<input id="input_db_variable_key_add" type="text" class="input_field" />
 			</td><td>
-				&nbsp;&nbsp;=&nbsp; 
+				&nbsp;&nbsp;=&nbsp;
 			</td><td width="60%">
 				<input id="input_db_variable_value_add" type="text" class="input_field" />
 			</td><td>
 				<input id="button_db_variable_add" type="button" value="Add" />
 			</td></tr></table>
-			
+
 		</div>
 
 		<div class="box">
@@ -220,7 +222,7 @@
 			<table class="box_table"><tr><td>
 				<input id="input_db_userdata_key_add" type="text" class="input_field" />
 			</td><td>
-				&nbsp;&nbsp;=&nbsp; 
+				&nbsp;&nbsp;=&nbsp;
 			</td><td>
 				<input id="input_db_userdata_value_add" type="text" class="input_field" />
 			</td><td>
@@ -368,12 +370,12 @@
 				<ul>
 					<li>
 						Make sure the onboard behavior engine is running in the current ROS environment. You can start it with the following command:<br />
-						<input id="rc_command_engine" type="text" value="roslaunch flexbe_onboard behavior_onboard.launch" class="code_copy" readonly="readonly" size="39" />
+						<input id="rc_command_engine" type="text" value="roslaunch flexbe_onboard behavior_onboard.launch" class="code_copy" readonly="readonly" size="38" />
 						<br /><br />
 					</li>
 					<li>
 						Make sure that operator control software is running for starting a behavior and monitoring its execution. You can start it with the following command:<br />
-						<input id="rc_command_engine" type="text" value="roslaunch flexbe_widget behavior_ocs.launch" class="code_copy" readonly="readonly" size="34" />
+						<input id="rc_command_engine" type="text" value="roslaunch flexbe_app flexbe_ocs.launch no_app:=true" class="code_copy" readonly="readonly" size="39" />
 						<br /><br />
 					</li>
 					<li>
@@ -393,13 +395,16 @@
 				Please choose one of the following options to proceed:
 				<ul>
 					<li>
-						Save your current behavior (make sure it is complete and correct).<br />
-						<input id="button_rc_save" type="button" value="Save Behavior" />
+						Load an existing behavior to execute.<br />
+						<input id="button_rc_load" type="button" value="Load Behavior" />
 						<br /><br />
 					</li>
 					<li>
-						Load an existing behavior to execute.<br />
-						<input id="button_rc_load" type="button" value="Load Behavior" />
+						Save your current behavior (make sure it is complete and correct).<br />
+						<input id="button_rc_save" type="button" value="Save Behavior" />
+						<br /><br />
+						Unsaved changes:
+						<div id="rc_save_history"></div>
 						<br /><br />
 					</li>
 				</ul>
@@ -456,6 +461,9 @@
 
 	<div id="settings">
 
+		<input style="display:none;" id="file_dialog_import" type="file" accept=".json" />
+		<input style="display:none;" id="file_dialog_export" type="file" accept=".json" nwsaveas="flexbe_config.json" />
+
 		<div class="box">
 			<h1>Runtime Settings</h1>
 			<font style="color: gray">
@@ -497,6 +505,9 @@
 							<option value="3">8 Spaces</option>
 						</select>
 					</td>
+				</tr>
+				<tr title="Explicitly specify the state package for all classes in the generated code even if class names are unique.">
+					<td width="150">Explicit state package: </td><td><input id="cb_explicit_states" type="checkbox" /> (even if state class is unique)</td>
 				</tr>
 				<tr title="Terminal command which is used to open the code editor.">
 					<td width="150">Editor command: </td>
@@ -561,17 +572,31 @@
 				Provides an overview of available state and behavior packages.
 			</font>
 			<table class="box_table" style="width: 100%; padding-right: 5px; margin-top: 5px">
+				<tr title="Parsing type for state packages. Regex: Interprets the source code based on regular expressions. Python: Uses Python to import and inspect the classes.">
+					<td width="150">State parser: </td>
+					<td><select id="select_state_parser">
+							<option value="regex">Regex</option>
+							<option value="python">Python</option>
+						</select>
+					</td>
+				</tr>
+				<tr title="If enabled, ROS packages are cached to not parse their package.xml on each start. State and behavior packages will always be parsed again.">
+					<td width="150">Cache packages: </td>
+					<td><input id="cb_pkg_cache_enabled" type="checkbox" /> (<i id="num_pkg_cache">?</i> ROS packages in cache)</td>
+				</tr>
+				<tr>
+					<td colspan="2">
+						<input id="button_force_discover" type="button" value="Force Discover" title="Clear cache and force discovery of new state or behavior packages. This should only be required if you add the export statement to an already existing package." />
+					</td>
+				</tr>
+			</table>
+			<table class="box_table" style="width: 100%; padding-right: 5px; margin-top: 5px">
 				<tr><td>Behavior Packages:</td></tr>
 				<tr><td id="workspace_behavior_packages"><i>none</i></td></tr>
 			</table>
 			<table class="box_table" style="width: 100%; padding-right: 5px; margin-top: 5px">
 				<tr><td>State Packages:</td></tr>
 				<tr><td id="workspace_state_packages"><i>none</i></td></tr>
-				<!--<tr>
-					<td colspan="2">
-						<input id="button_force_discover" type="button" value="Force Discover" title="Force discovery of new state or behavior packages. This is only required if you add the export statement to an already existing package." />
-					</td>
-				</tr>-->
 			</table>
 		</div>
 
@@ -620,25 +645,25 @@
 			<div id="panel_prop_parameters" class="sidepanel_category">
 				<b>Parameters</b>
 				<table id="panel_prop_parameters_content" class="sidepanel_table">
-					
+
 				</table>
 			</div>
 			<div id="panel_prop_autonomy" class="sidepanel_category">
 				<b>Required Autonomy Levels</b>
 				<table id="panel_prop_autonomy_content" class="sidepanel_table">
-					
+
 				</table>
 			</div>
 			<div id="panel_prop_input_keys" class="sidepanel_category">
 				<b>Input Key Mapping</b>
 				<table id="panel_prop_input_keys_content" class="sidepanel_table">
-					
+
 				</table>
 			</div>
 			<div id="panel_prop_output_keys" class="sidepanel_category">
 				<b>Output Key Mapping</b>
 				<table id="panel_prop_output_keys_content" class="sidepanel_table">
-					
+
 				</table>
 			</div>
 
@@ -663,22 +688,29 @@
 
 			<input id="button_view_behavior" type="button" value="Open this Behavior" />
 
+			<div id="panel_prop_be_parameters" class="sidepanel_category">
+				<b>Parameters</b>
+				<table id="panel_prop_be_parameters_content" class="sidepanel_table">
+
+				</table>
+			</div>
+
 			<div id="panel_prop_be_autonomy" class="sidepanel_category">
 				<b>Required Autonomy Levels</b>
 				<table id="panel_prop_be_autonomy_content" class="sidepanel_table">
-					
+
 				</table>
 			</div>
 			<div id="panel_prop_be_input_keys" class="sidepanel_category">
 				<b>Input Key Mapping</b>
 				<table id="panel_prop_be_input_keys_content" class="sidepanel_table">
-					
+
 				</table>
 			</div>
 			<div id="panel_prop_be_output_keys" class="sidepanel_category">
 				<b>Output Key Mapping</b>
 				<table id="panel_prop_be_output_keys_content" class="sidepanel_table">
-					
+
 				</table>
 			</div>
 
@@ -692,7 +724,7 @@
 				<input id="input_prop_sm_name" class="inline_title_text_edit" type="text" />
 			</div>
 			<div style="font-style: italic; padding: 0px 5px; margin-top: 5px; color: gray;">
-				Type: 
+				Type:
 				<select id="select_container_type">
 					<option value="statemachine">Statemachine</option>
 					<option value="concurrency">Concurrency</option>
@@ -730,7 +762,7 @@
 			<div id="panel_prop_sm_autonomy" class="sidepanel_category">
 				<b>Outcomes</b>
 				<table id="panel_prop_sm_outcomes_content" class="sidepanel_table">
-					
+
 				</table>
 				<table class="sidepanel_table"><tr><td>
 					<input id="input_prop_outcome_add" type="text" class="input_field" />
@@ -741,7 +773,7 @@
 			<div id="panel_prop_sm_input_keys" class="sidepanel_category">
 				<b>Input Keys</b>
 				<table id="panel_prop_sm_input_keys_content" class="sidepanel_table">
-					
+
 				</table>
 				<table class="sidepanel_table"><tr><td>
 					<input id="input_prop_input_key_add" type="text" class="input_field" />
@@ -752,7 +784,7 @@
 			<div id="panel_prop_sm_output_keys" class="sidepanel_category">
 				<b>Output Keys</b>
 				<table id="panel_prop_sm_output_keys_content" class="sidepanel_table">
-					
+
 				</table>
 				<table class="sidepanel_table"><tr><td>
 					<input id="input_prop_output_key_add" type="text" class="input_field" />
@@ -805,7 +837,7 @@
 		<div class="sidepanel_title_text">
 			Select Behavior
 		</div>
-		
+
 		<div class="sidepanel_category">
 			<table class="sidepanel_table">
 				<tr>
@@ -827,7 +859,7 @@
 	</div>
 
 	<div id="terminal">
-		
+
 	</div>
 
 	<div class="emptypage">
@@ -835,7 +867,7 @@
 	</div>
 
 	<div id="add_state_panel" style="display: none; position: absolute; top: 100px; left: 100px; background-color: white; border: 1px solid black;">
-		
+
 	</div>
 
 	<div id="tool_overlay">
